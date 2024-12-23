@@ -1,47 +1,64 @@
 package main
 
 import (
-	"fmt"
+	"context"
 	"log"
-
-	"github.com/fsnotify/fsnotify"
+	"net"
+	"os"
+	"sync"
 )
 
+type Config struct {
+	IP   net.IP
+	Port int
+}
+
+type Application struct {
+	udpConn *net.UDPConn
+	cfg     Config
+	clients *sync.Map
+	logger  *log.Logger
+	ctx     context.Context
+	cancel  context.CancelFunc
+}
+
+func NewApplication(cfg Config) (*Application, error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	log := log.New(os.Stdout, "[udpserver]", log.LstdFlags)
+
+	addrs := &net.UDPAddr{
+		IP:   cfg.IP,
+		Port: cfg.Port,
+		Zone: "",
+	}
+
+	conn, err := net.ListenUDP("udp", addrs)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return &Application{
+		udpConn: conn,
+		cfg:     cfg,
+		clients: &sync.Map{},
+		logger:  log,
+		ctx:     ctx,
+		cancel:  cancel,
+	}, nil
+}
+
 func main() {
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		fmt.Println("err", err)
+	cfg := Config{
+		IP:   net.ParseIP("127.0.0.1"),
+		Port: 3000,
 	}
 
-	defer watcher.Close()
+	app, err := NewApplication(cfg)
 
-	go func() {
-		for {
-			select {
-			case event, ok := <-watcher.Events:
-				if !ok {
-					fmt.Println("!ok")
-					break
-				}
-				log.Println("event", event)
-				if event.Has(fsnotify.Write) {
-					log.Println("modified file ", event)
-				}
-			case err, ok := <-watcher.Errors:
-				if !ok {
-					log.Println("ok not")
-					return
-				}
-				log.Println("erro", err)
-			}
-
-		}
-
-	}()
-
-	err = watcher.Add("testDir/test.txt")
 	if err != nil {
-		log.Fatal("err", err)
+		log.Fatal(err)
 	}
-	<-make(chan struct{})
+
+	app.HandleUdp()
 }
